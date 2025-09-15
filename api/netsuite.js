@@ -1,4 +1,3 @@
-// api/netsuite.js - Deploy to Vercel
 const crypto = require('crypto');
 
 export default async function handler(req, res) {
@@ -11,6 +10,14 @@ export default async function handler(req, res) {
     return res.status(200).end();
   }
 
+  // Debug logging
+  console.log('=== DEBUG INFO ===');
+  console.log('Request URL:', req.url);
+  console.log('Request method:', req.method);
+  console.log('Environment variables check:');
+  console.log('- Account ID:', process.env.NETSUITE_ACCOUNT_ID ? 'Set' : 'Missing');
+  console.log('- Consumer Key:', process.env.NETSUITE_CONSUMER_KEY ? 'Set' : 'Missing');
+  console.log('- Username:', process.env.NETSUITE_USERNAME ? 'Set' : 'Missing');
   // Your NetSuite credentials - SET THESE IN VERCEL ENVIRONMENT VARIABLES
   const config = {
     accountId: process.env.NETSUITE_ACCOUNT_ID || '8231075',
@@ -22,21 +29,30 @@ export default async function handler(req, res) {
     account: process.env.NETSUITE_ACCOUNT_ID || '8231075'
   };
 
-  // NetSuite Workflow Administrator Authentication
-  function generateNetSuiteAuth() {
-    // For Workflow Administrator role, use NLAuth (NetSuite Login Authentication)
-    const nlAuth = `NLAuth nlauth_account=${config.account}, nlauth_email=${config.username}, nlauth_signature=${config.password}, nlauth_role=${config.role}`;
-    return nlAuth;
+// Check if credentials are set
+  if (!config.consumerKey || !config.consumerSecret) {
+    return res.status(500).json({
+      error: 'NetSuite credentials not configured',
+      missing: {
+        consumerKey: !config.consumerKey,
+        consumerSecret: !config.consumerSecret,
+        username: !config.username,
+        password: !config.password
+      }
+    });
   }
 
-  // Alternative: Basic Authentication for REST API
+  // Simple Basic Auth function (most reliable)
   function generateBasicAuth() {
+    if (!config.username || !config.password) {
+      throw new Error('Username or password not set');
+    }
     const credentials = `${config.username}:${config.password}`;
     const encoded = Buffer.from(credentials).toString('base64');
     return `Basic ${encoded}`;
   }
 
-  // OAuth 1.0 for Workflow Administrator (simplified)
+  // Simplified OAuth 1.0 (no token required)
   function generateOAuth1Header(url, method = 'GET') {
     const timestamp = Math.floor(Date.now() / 1000).toString();
     const nonce = crypto.randomBytes(16).toString('hex');
@@ -44,7 +60,7 @@ export default async function handler(req, res) {
     const oauthParams = {
       oauth_consumer_key: config.consumerKey,
       oauth_nonce: nonce,
-      oauth_signature_method: 'HMAC-SHA256',
+      oauth_signature_method: 'HMAC-SHA1',
       oauth_timestamp: timestamp,
       oauth_version: '1.0'
     };
@@ -57,12 +73,12 @@ export default async function handler(req, res) {
       
     const baseString = `${method.toUpperCase()}&${encodeURIComponent(url)}&${encodeURIComponent(paramsString)}`;
     
-    // Create signing key for Workflow Administrator (only consumer secret)
+    // Create signing key (only consumer secret)
     const signingKey = `${encodeURIComponent(config.consumerSecret)}&`;
     
-    // Generate signature
+    // Generate signature using HMAC-SHA1
     const signature = crypto
-      .createHmac('sha256', signingKey)
+      .createHmac('sha1', signingKey)
       .update(baseString)
       .digest('base64');
     
@@ -70,7 +86,7 @@ export default async function handler(req, res) {
     
     // Create authorization header
     const authHeader = 'OAuth ' + Object.keys(oauthParams)
-      .map(key => `${encodeURIComponent(key)}="${encodeURIComponent(oauthParams[key])}"`)
+      .map(key => `${key}="${encodeURIComponent(oauthParams[key])}"`)
       .join(', ');
     
     return authHeader;
@@ -78,52 +94,61 @@ export default async function handler(req, res) {
 
   try {
     // Extract the path from request
-    const path = req.url.startsWith('/api/netsuite') 
-      ? req.url.replace('/api/netsuite', '') 
-      : req.url;
+    let path = req.url;
+    if (path.startsWith('/api/netsuite')) {
+      path = path.replace('/api/netsuite', '');
+    }
+    
+    // Default to customer endpoint if no path specified
+    if (!path || path === '/') {
+      path = '/record/v1/customer?limit=5';
+    }
     
     // Build NetSuite URL
     const netsuiteUrl = `https://${config.accountId}.suitetalk.api.netsuite.com/services/rest${path}`;
     
-    // Try multiple authentication methods for Workflow Administrator
+    console.log('Built NetSuite URL:', netsuiteUrl);
+    
+    // Try Basic Auth first (most reliable)
     let authHeader;
-    let authMethod = 'unknown';
+    let authMethod;
     
     try {
-      // Method 1: Try NLAuth (NetSuite Login Authentication)
-      authHeader = generateNetSuiteAuth();
-      authMethod = 'NLAuth';
-      console.log('Using NLAuth for Workflow Administrator');
-    } catch (error) {
-      console.log('NLAuth failed, trying OAuth 1.0:', error.message);
+      authHeader = generateBasicAuth();
+      authMethod = 'Basic';
+      console.log('Using Basic Auth');
+    } catch (basicError) {
+      console.log('Basic Auth failed, trying OAuth 1.0:', basicError.message);
       try {
-        // Method 2: Try OAuth 1.0
         authHeader = generateOAuth1Header(netsuiteUrl, req.method);
         authMethod = 'OAuth1';
-        console.log('Using OAuth 1.0 for Workflow Administrator');
+        console.log('Using OAuth 1.0');
       } catch (oauthError) {
-        console.log('OAuth 1.0 failed, trying Basic Auth:', oauthError.message);
-        // Method 3: Fallback to Basic Auth
-        authHeader = generateBasicAuth();
-        authMethod = 'Basic';
-        console.log('Using Basic Auth for Workflow Administrator');
+        console.log('OAuth 1.0 failed:', oauthError.message);
+        return res.status(500).json({
+          error: 'Authentication setup failed',
+          basicError: basicError.message,
+          oauthError: oauthError.message
+        });
       }
     }
     
-    console.log('Proxying to:', netsuiteUrl);
-    console.log('Method:', req.method);
     console.log('Auth method:', authMethod);
-    console.log('Auth header:', authHeader.substring(0, 50) + '...');
+    console.log('Auth header preview:', authHeader.substring(0, 50) + '...');
     
-    // Make request to NetSuite
+    // Make request to NetSuite with timeout
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 25000); // 25 second timeout
+    
     const fetchOptions = {
       method: req.method,
       headers: {
         'Authorization': authHeader,
         'Content-Type': 'application/json',
         'Accept': 'application/json',
-        'User-Agent': 'NetSuite-WorkflowAdmin-ChatGPT/1.0'
-      }
+        'User-Agent': 'NetSuite-ChatGPT-Proxy/1.0'
+      },
+      signal: controller.signal
     };
     
     // Add body for POST/PATCH requests
@@ -131,40 +156,49 @@ export default async function handler(req, res) {
       fetchOptions.body = JSON.stringify(req.body);
     }
     
+    console.log('Making request to NetSuite...');
     const response = await fetch(netsuiteUrl, fetchOptions);
-    const responseText = await response.text();
+    clearTimeout(timeoutId);
     
     console.log('NetSuite response status:', response.status);
-    console.log('NetSuite response:', responseText.substring(0, 200) + '...');
+    console.log('NetSuite response headers:', Object.fromEntries(response.headers.entries()));
+    
+    const responseText = await response.text();
+    console.log('NetSuite response preview:', responseText.substring(0, 300) + '...');
     
     // Try to parse as JSON, fallback to text
     let data;
     try {
       data = JSON.parse(responseText);
     } catch (e) {
-      data = { text: responseText, status: response.status };
+      data = { 
+        raw: responseText, 
+        status: response.status,
+        parseError: e.message
+      };
     }
     
     res.status(response.status).json(data);
     
   } catch (error) {
-    console.error('Proxy error:', error);
+    console.error('=== PROXY ERROR ===');
+    console.error('Error name:', error.name);
+    console.error('Error message:', error.message);
+    console.error('Error cause:', error.cause);
+    console.error('Full error:', error);
+    
     res.status(500).json({ 
       error: 'Proxy server error',
       message: error.message,
-      stack: error.stack
+      name: error.name,
+      cause: error.cause?.toString(),
+      config: {
+        accountId: config.accountId,
+        hasConsumerKey: !!config.consumerKey,
+        hasUsername: !!config.username
+      }
     });
   }
 }
-
-// Alternative endpoint for testing
-export function config() {
-  return {
-    api: {
-      bodyParser: {
-        sizeLimit: '1mb',
-      },
-    },
-  }
-
 }
+
