@@ -1,0 +1,130 @@
+// api/netsuite.js - Deploy to Vercel
+const crypto = require('crypto');
+
+export default async function handler(req, res) {
+  // Enable CORS for ChatGPT
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE');
+  res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
+  
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+
+  // Your NetSuite credentials - SET THESE IN VERCEL ENVIRONMENT VARIABLES
+  const config = {
+    accountId: process.env.NETSUITE_ACCOUNT_ID || '8231075',
+    consumerKey: process.env.NETSUITE_CONSUMER_KEY || 'YOUR_CONSUMER_KEY',
+    consumerSecret: process.env.NETSUITE_CONSUMER_SECRET || 'YOUR_CONSUMER_SECRET',
+    tokenId: process.env.NETSUITE_TOKEN_ID || 'YOUR_TOKEN_ID',
+    tokenSecret: process.env.NETSUITE_TOKEN_SECRET || 'YOUR_TOKEN_SECRET'
+  };
+
+  // Generate OAuth 1.0 signature
+  function generateOAuth1Header(url, method = 'GET') {
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    const nonce = crypto.randomBytes(16).toString('hex');
+    
+    const oauthParams = {
+      oauth_consumer_key: config.consumerKey,
+      oauth_nonce: nonce,
+      oauth_signature_method: 'HMAC-SHA256',
+      oauth_timestamp: timestamp,
+      oauth_token: config.tokenId,
+      oauth_version: '1.0'
+    };
+    
+    // Create signature base string
+    const paramsString = Object.keys(oauthParams)
+      .sort()
+      .map(key => `${encodeURIComponent(key)}=${encodeURIComponent(oauthParams[key])}`)
+      .join('&');
+      
+    const baseString = `${method.toUpperCase()}&${encodeURIComponent(url)}&${encodeURIComponent(paramsString)}`;
+    
+    // Create signing key
+    const signingKey = `${encodeURIComponent(config.consumerSecret)}&${encodeURIComponent(config.tokenSecret)}`;
+    
+    // Generate signature
+    const signature = crypto
+      .createHmac('sha256', signingKey)
+      .update(baseString)
+      .digest('base64');
+    
+    oauthParams.oauth_signature = signature;
+    
+    // Create authorization header
+    const authHeader = 'OAuth ' + Object.keys(oauthParams)
+      .map(key => `${encodeURIComponent(key)}="${encodeURIComponent(oauthParams[key])}"`)
+      .join(', ');
+    
+    return authHeader;
+  }
+
+  try {
+    // Extract the path from request
+    const path = req.url.startsWith('/api/netsuite') 
+      ? req.url.replace('/api/netsuite', '') 
+      : req.url;
+    
+    // Build NetSuite URL
+    const netsuiteUrl = `https://${config.accountId}.suitetalk.api.netsuite.com/services/rest${path}`;
+    
+    // Generate auth header
+    const authHeader = generateOAuth1Header(netsuiteUrl, req.method);
+    
+    console.log('Proxying to:', netsuiteUrl);
+    console.log('Method:', req.method);
+    console.log('Auth header:', authHeader.substring(0, 50) + '...');
+    
+    // Make request to NetSuite
+    const fetchOptions = {
+      method: req.method,
+      headers: {
+        'Authorization': authHeader,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      }
+    };
+    
+    // Add body for POST/PATCH requests
+    if (req.method !== 'GET' && req.method !== 'DELETE' && req.body) {
+      fetchOptions.body = JSON.stringify(req.body);
+    }
+    
+    const response = await fetch(netsuiteUrl, fetchOptions);
+    const responseText = await response.text();
+    
+    console.log('NetSuite response status:', response.status);
+    console.log('NetSuite response:', responseText.substring(0, 200) + '...');
+    
+    // Try to parse as JSON, fallback to text
+    let data;
+    try {
+      data = JSON.parse(responseText);
+    } catch (e) {
+      data = { text: responseText, status: response.status };
+    }
+    
+    res.status(response.status).json(data);
+    
+  } catch (error) {
+    console.error('Proxy error:', error);
+    res.status(500).json({ 
+      error: 'Proxy server error',
+      message: error.message,
+      stack: error.stack
+    });
+  }
+}
+
+// Alternative endpoint for testing
+export function config() {
+  return {
+    api: {
+      bodyParser: {
+        sizeLimit: '1mb',
+      },
+    },
+  }
+}
