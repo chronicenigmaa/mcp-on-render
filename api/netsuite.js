@@ -14,10 +14,10 @@ export default async function handler(req, res) {
   // Your NetSuite credentials - SET THESE IN VERCEL ENVIRONMENT VARIABLES
   const config = {
     accountId: process.env.NETSUITE_ACCOUNT_ID || '8231075',
-    consumerKey: process.env.NETSUITE_CONSUMER_KEY || 'YOUR_CONSUMER_KEY',
-    consumerSecret: process.env.NETSUITE_CONSUMER_SECRET || 'YOUR_CONSUMER_SECRET',
-    username: process.env.NETSUITE_USERNAME || 'YOUR_USERNAME',
-    password: process.env.NETSUITE_PASSWORD || 'YOUR_PASSWORD',
+    consumerKey: process.env.NETSUITE_CONSUMER_KEY || 'f6a14ecee4e64957a1631a813fe54ee0ed907566feaed5c01ed7d4f4adb78297',
+    consumerSecret: process.env.NETSUITE_CONSUMER_SECRET || 'f6494b9f9ca5c3fe8dc93f293b2b1c3393a2c34e94fb1821b035bc24647d1940',
+    username: process.env.NETSUITE_USERNAME || 'zeke.e@californiachemical.com',
+    password: process.env.NETSUITE_PASSWORD || 'Zain2025!!!',
     role: process.env.NETSUITE_ROLE || '17', // Workflow Administrator role ID
     account: process.env.NETSUITE_ACCOUNT_ID || '8231075'
   };
@@ -166,4 +166,5 @@ export function config() {
       },
     },
   }
+
 }
